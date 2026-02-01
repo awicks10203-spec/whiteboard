@@ -1,0 +1,506 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classroom Whiteboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"></script>
+    <style>
+        .canvas-container {
+            touch-action: none;
+            cursor: crosshair;
+        }
+        .teacher-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        canvas {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+        #text-input-float {
+            position: absolute;
+            display: none;
+            border: 2px solid #3b82f6;
+            outline: none;
+            padding: 4px;
+            background: white;
+            font-family: sans-serif;
+            z-index: 100;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+
+    <!-- Auth Section -->
+    <div id="auth-screen" class="flex flex-col items-center justify-center min-h-screen">
+        <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <h1 class="text-3xl font-bold text-slate-800 mb-6">Classroom Whiteboard</h1>
+            <p class="text-slate-600 mb-8">Draw, write, and share with your teacher in real time.</p>
+            <button onclick="signInWithGoogle()" class="flex items-center justify-center w-full bg-white border border-slate-300 py-3 px-4 rounded-lg font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-6 h-6 mr-3" alt="Google Logo">
+                Sign in with Google
+            </button>
+            <div class="mt-4 flex gap-4">
+                <button onclick="setRole('student')" id="role-student" class="flex-1 py-2 rounded-md bg-blue-100 text-blue-700 font-medium border-2 border-blue-500">I am a Student</button>
+                <button onclick="setRole('teacher')" id="role-teacher" class="flex-1 py-2 rounded-md bg-slate-100 text-slate-700 font-medium border-2 border-transparent">I am a Teacher</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Student Dashboard -->
+    <div id="student-dashboard" class="hidden p-4 md:p-8">
+        <div class="max-w-4xl mx-auto">
+            <header class="flex justify-between items-center mb-6">
+                <div>
+                    <h2 id="student-welcome" class="text-2xl font-bold text-slate-800">Your Whiteboard</h2>
+                    <p id="save-status" class="text-sm text-green-600 font-medium">Ready</p>
+                </div>
+                <div class="flex gap-3">
+                    <button onclick="clearCanvas()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition">Clear All</button>
+                    <button onclick="logout()" class="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition">Logout</button>
+                </div>
+            </header>
+
+
+            <div class="bg-white p-4 rounded-xl shadow-lg relative">
+                <div class="flex flex-wrap gap-4 mb-4 items-center">
+                    <div class="flex bg-slate-100 p-1 rounded-lg">
+                        <button onclick="setTool('brush')" id="tool-brush" class="px-4 py-1 rounded-md bg-white shadow-sm font-medium text-blue-600">Brush</button>
+                        <button onclick="setTool('text')" id="tool-text" class="px-4 py-1 rounded-md text-slate-600">Text</button>
+                    </div>
+                    <div class="h-6 w-px bg-slate-300 mx-2"></div>
+                    <input type="color" id="brush-color" class="w-10 h-10 border-none rounded cursor-pointer" value="#3b82f6">
+                    <input type="range" id="brush-size" min="1" max="20" value="5" class="w-32">
+                    <span class="text-slate-600 text-sm">Size: <span id="brush-size-val">5</span></span>
+                </div>
+
+
+                <div class="canvas-container relative w-full aspect-video border-2 border-slate-100 rounded-lg overflow-hidden" id="canvas-wrapper">
+                    <canvas id="main-canvas" class="w-full h-full"></canvas>
+                    <input type="text" id="text-input-float" placeholder="Type and hit Enter...">
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Teacher Dashboard -->
+    <div id="teacher-dashboard" class="hidden p-4 md:p-8">
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div>
+                <h2 class="text-3xl font-bold text-slate-800 tracking-tight">Teacher Dashboard</h2>
+                <p class="text-slate-500">Monitoring live student progress</p>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="saveClassSnapshot()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-md transition font-medium">Snapshot Class</button>
+                <button onclick="logout()" class="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition">Logout</button>
+            </div>
+        </header>
+
+
+        <div class="mb-12">
+            <h3 class="text-xl font-semibold mb-4 text-slate-700 flex items-center">
+                <span class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span> Live Class
+            </h3>
+            <div id="class-grid" class="teacher-grid"></div>
+        </div>
+
+
+        <div class="border-t border-slate-200 pt-8">
+            <h3 class="text-xl font-semibold mb-6 text-slate-700">Class Gallery (Saved Snapshots)</h3>
+            <div id="gallery-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Snapshots go here -->
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Full Screen Modal -->
+    <div id="full-screen-modal" class="modal" onclick="this.style.display='none'">
+        <div class="max-w-[90vw] max-h-[90vh] bg-white p-4 rounded-xl relative" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="modal-title" class="text-xl font-bold text-slate-800">Student Work</h3>
+                <button onclick="document.getElementById('full-screen-modal').style.display='none'" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+            </div>
+            <img id="modal-img" src="" class="w-full h-auto rounded shadow-sm border border-slate-100">
+        </div>
+    </div>
+
+
+    <script>
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "", authDomain: "", projectId: "", storageBucket: "", messagingSenderId: "", appId: "" };
+        const app = firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'whiteboard-app-1';
+
+
+        let currentUser = null;
+        let currentRole = 'student';
+        let currentTool = 'brush'; 
+        let isDrawing = false;
+        let isDraggingText = false;
+        let selectedTextIndex = -1;
+        let lastPos = { x: 0, y: 0 };
+        let saveTimeout = null;
+        let drawingLayer = null; 
+        let textObjects = [];    
+        let liveBoards = {}; // Cache for snapshotting
+
+
+        const authScreen = document.getElementById('auth-screen');
+        const studentDashboard = document.getElementById('student-dashboard');
+        const teacherDashboard = document.getElementById('teacher-dashboard');
+        const mainCanvas = document.getElementById('main-canvas');
+        const ctx = mainCanvas.getContext('2d');
+        const brushColor = document.getElementById('brush-color');
+        const brushSize = document.getElementById('brush-size');
+        const brushSizeVal = document.getElementById('brush-size-val');
+        const saveStatus = document.getElementById('save-status');
+        const textInputFloat = document.getElementById('text-input-float');
+        const canvasWrapper = document.getElementById('canvas-wrapper');
+
+
+        function setRole(role) {
+            currentRole = role;
+            document.getElementById('role-student').className = role === 'student' ? "flex-1 py-2 rounded-md bg-blue-100 text-blue-700 font-medium border-2 border-blue-500" : "flex-1 py-2 rounded-md bg-slate-100 text-slate-700 font-medium border-2 border-transparent";
+            document.getElementById('role-teacher').className = role === 'teacher' ? "flex-1 py-2 rounded-md bg-blue-100 text-blue-700 font-medium border-2 border-blue-500" : "flex-1 py-2 rounded-md bg-slate-100 text-slate-700 font-medium border-2 border-transparent";
+        }
+
+
+        async function signInWithGoogle() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await auth.signInWithCustomToken(__initial_auth_token);
+                else await auth.signInWithPopup(provider);
+            } catch (error) { console.error(error); }
+        }
+
+
+        function logout() { auth.signOut().then(() => window.location.reload()); }
+
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                currentUser = user;
+                authScreen.classList.add('hidden');
+                if (currentRole === 'teacher') startTeacherMode();
+                else startStudentMode();
+            } else { authScreen.classList.remove('hidden'); }
+        });
+
+
+        function setTool(tool) {
+            currentTool = tool;
+            textInputFloat.style.display = 'none';
+            document.getElementById('tool-brush').className = tool === 'brush' ? "px-4 py-1 rounded-md bg-white shadow-sm font-medium text-blue-600" : "px-4 py-1 rounded-md text-slate-600";
+            document.getElementById('tool-text').className = tool === 'text' ? "px-4 py-1 rounded-md bg-white shadow-sm font-medium text-blue-600" : "px-4 py-1 rounded-md text-slate-600";
+        }
+
+
+        function startStudentMode() {
+            studentDashboard.classList.remove('hidden');
+            resizeCanvas();
+            setupDrawingListeners();
+        }
+
+
+        function resizeCanvas() {
+            const rect = canvasWrapper.getBoundingClientRect();
+            mainCanvas.width = rect.width;
+            mainCanvas.height = rect.height;
+            loadBoardData();
+        }
+
+
+        function setupDrawingListeners() {
+            mainCanvas.addEventListener('mousedown', handleMouseDown);
+            mainCanvas.addEventListener('mousemove', handleMouseMove);
+            mainCanvas.addEventListener('mouseup', handleMouseUp);
+            textInputFloat.addEventListener('keydown', e => { if (e.key === 'Enter') createNewTextObject(); });
+            brushSize.addEventListener('input', () => brushSizeVal.innerText = brushSize.value);
+        }
+
+
+        function handleMouseDown(e) {
+            const rect = mainCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            if (currentTool === 'brush') { isDrawing = true; lastPos = { x, y }; }
+            else {
+                selectedTextIndex = findTextAt(x, y);
+                if (selectedTextIndex !== -1) { isDraggingText = true; lastPos = { x, y }; }
+                else showTextInput(x, y);
+            }
+        }
+
+
+        function handleMouseMove(e) {
+            const rect = mainCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            if (isDrawing) {
+                ctx.beginPath(); ctx.moveTo(lastPos.x, lastPos.y); ctx.lineTo(x, y);
+                ctx.strokeStyle = brushColor.value; ctx.lineWidth = brushSize.value; ctx.lineCap = 'round'; ctx.stroke();
+                lastPos = { x, y }; scheduleSave();
+            } else if (isDraggingText) {
+                const dx = x - lastPos.x; const dy = y - lastPos.y;
+                textObjects[selectedTextIndex].x += dx; textObjects[selectedTextIndex].y += dy;
+                lastPos = { x, y }; renderAll(); scheduleSave();
+            }
+        }
+
+
+        function handleMouseUp() {
+            isDrawing = false; isDraggingText = false;
+            if (currentTool === 'brush') drawingLayer = mainCanvas.toDataURL();
+        }
+
+
+        function findTextAt(x, y) {
+            for (let i = textObjects.length - 1; i >= 0; i--) {
+                const t = textObjects[i];
+                ctx.font = `${t.size * 3}px sans-serif`;
+                const metrics = ctx.measureText(t.text);
+                if (x >= t.x && x <= t.x + metrics.width && y >= t.y - (t.size*3) && y <= t.y) return i;
+            }
+            return -1;
+        }
+
+
+        function showTextInput(x, y) {
+            textInputFloat.style.display = 'block'; textInputFloat.style.left = x + 'px'; textInputFloat.style.top = (y - 15) + 'px';
+            textInputFloat.style.color = brushColor.value; textInputFloat.style.fontSize = (parseInt(brushSize.value) * 3) + 'px';
+            textInputFloat.value = ''; textInputFloat.focus(); lastPos = { x, y };
+        }
+
+
+        function createNewTextObject() {
+            const text = textInputFloat.value;
+            if (text.trim()) {
+                textObjects.push({ text: text, x: lastPos.x, y: lastPos.y, color: brushColor.value, size: parseInt(brushSize.value) });
+                renderAll(); scheduleSave();
+            }
+            textInputFloat.style.display = 'none';
+        }
+
+
+        function renderAll() {
+            ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+            if (drawingLayer) {
+                const img = new Image();
+                img.onload = () => { ctx.drawImage(img, 0, 0); renderTextObjects(); };
+                img.src = drawingLayer;
+            } else renderTextObjects();
+        }
+
+
+        function renderTextObjects() {
+            textObjects.forEach(t => { ctx.font = `${t.size * 3}px sans-serif`; ctx.fillStyle = t.color; ctx.fillText(t.text, t.x, t.y); });
+        }
+
+
+        function clearCanvas() { ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height); drawingLayer = null; textObjects = []; saveBoard(); }
+
+
+        function scheduleSave() {
+            saveStatus.innerText = "Saving..."; saveStatus.classList.replace('text-green-600', 'text-amber-600');
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(saveBoard, 1500);
+        }
+
+
+        async function saveBoard() {
+            if (!currentUser) return;
+            const fullDataUrl = mainCanvas.toDataURL();
+            try {
+                const path = `/artifacts/${appId}/public/data/whiteboards`;
+                await db.doc(`${path}/${currentUser.uid}`).set({
+                    studentName: currentUser.displayName, photoURL: currentUser.photoURL, boardData: fullDataUrl,
+                    rawDrawing: drawingLayer, textObjects: JSON.stringify(textObjects), lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                saveStatus.innerText = "All changes saved"; saveStatus.classList.replace('text-amber-600', 'text-green-600');
+            } catch (err) { console.error(err); }
+        }
+
+
+        async function loadBoardData() {
+            const path = `/artifacts/${appId}/public/data/whiteboards`;
+            const doc = await db.doc(`${path}/${currentUser.uid}`).get();
+            if (doc.exists) {
+                const data = doc.data();
+                drawingLayer = data.rawDrawing || null;
+                textObjects = data.textObjects ? JSON.parse(data.textObjects) : [];
+                renderAll();
+            }
+        }
+
+
+        // --- Teacher Mode Logic ---
+        function startTeacherMode() {
+            teacherDashboard.classList.remove('hidden');
+            const boardPath = `/artifacts/${appId}/public/data/whiteboards`;
+            const sessionPath = `/artifacts/${appId}/public/data/sessions`;
+
+
+            // Live Boards
+            db.collection(boardPath).onSnapshot(snapshot => {
+                const grid = document.getElementById('class-grid');
+                snapshot.docChanges().forEach(change => {
+                    const data = change.doc.data();
+                    const id = change.doc.id;
+                    liveBoards[id] = data;
+                    if (change.type === "added" || change.type === "modified") {
+                        let card = document.getElementById(`card-${id}`);
+                        if (!card) {
+                            card = createStudentCard(id, data);
+                            grid.appendChild(card);
+                        }
+                        const img = document.getElementById(`img-${id}`);
+                        if (img) img.src = data.boardData;
+                    }
+                });
+            });
+
+
+            // Past Snapshots
+            db.collection(sessionPath).onSnapshot(snapshot => {
+                const gallery = document.getElementById('gallery-grid');
+                gallery.innerHTML = '';
+                snapshot.docs.sort((a,b) => b.data().timestamp - a.data().timestamp).forEach(doc => {
+                    gallery.appendChild(createSnapshotCard(doc.data()));
+                });
+            });
+        }
+
+
+        function createStudentCard(id, data) {
+            const div = document.createElement('div');
+            div.id = `card-${id}`;
+            div.className = "bg-white p-4 rounded-xl shadow-md border border-slate-200 hover:border-blue-300 transition-all cursor-pointer";
+            div.onclick = () => showFullWork(data.studentName, data.boardData);
+            div.innerHTML = `
+                <div class="flex items-center gap-3 mb-3">
+                    <img src="${data.photoURL || 'https://via.placeholder.com/40'}" class="w-8 h-8 rounded-full border border-slate-100">
+                    <p class="font-bold text-slate-800 text-sm">${data.studentName}</p>
+                </div>
+                <div class="aspect-video bg-slate-50 rounded border overflow-hidden">
+                    <img id="img-${id}" src="${data.boardData}" class="w-full h-full object-contain">
+                </div>
+                <p class="mt-2 text-[10px] text-slate-400 text-right italic">Click to expand</p>
+            `;
+            return div;
+        }
+
+
+        async function saveClassSnapshot() {
+            const sessionName = prompt("Enter a name for this session (e.g., Morning Math):", "Class Work " + new Date().toLocaleTimeString());
+            if (!sessionName) return;
+
+
+            const snapshotData = {
+                title: sessionName,
+                timestamp: Date.now(),
+                boards: Object.values(liveBoards)
+            };
+
+
+            try {
+                const path = `/artifacts/${appId}/public/data/sessions`;
+                await db.collection(path).add(snapshotData);
+            } catch (err) { console.error(err); }
+        }
+
+
+        function createSnapshotCard(data) {
+            const date = new Date(data.timestamp).toLocaleString();
+            const div = document.createElement('div');
+            div.className = "bg-white rounded-xl shadow p-4 border border-slate-100 flex flex-col gap-4";
+            
+            // Preview of the first 3 students
+            let previews = data.boards.slice(0, 3).map(b => `<img src="${b.boardData}" class="w-12 h-12 rounded border border-slate-200 object-cover">`).join('');
+            
+            div.innerHTML = `
+                <div>
+                    <h4 class="font-bold text-slate-800">${data.title}</h4>
+                    <p class="text-xs text-slate-400">${date} • ${data.boards.length} Students</p>
+                </div>
+                <div class="flex gap-2 bg-slate-50 p-2 rounded-lg">
+                    ${previews}
+                    ${data.boards.length > 3 ? `<div class="w-12 h-12 flex items-center justify-center bg-slate-200 text-slate-600 text-xs font-bold rounded">+${data.boards.length - 3}</div>` : ''}
+                </div>
+                <button onclick='viewSessionDetail(${JSON.stringify(data)})' class="w-full py-2 text-sm bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition font-medium">View Session</button>
+            `;
+            return div;
+        }
+
+
+        function viewSessionDetail(session) {
+            const grid = document.getElementById('class-grid');
+            // Temporarily swap live grid for snapshot grid if desired, or just show full detail
+            // For now, we'll alert that it's loading and let you build a specific viewer if needed.
+            const viewer = document.getElementById('full-screen-modal');
+            const container = document.createElement('div');
+            container.className = "p-8 overflow-y-auto max-h-[80vh] w-full";
+            container.innerHTML = `<h2 class="text-2xl font-bold mb-6">${session.title}</h2><div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                ${session.boards.map(b => `
+                    <div class="bg-slate-50 p-2 rounded border border-slate-200">
+                        <p class="text-xs font-bold mb-2">${b.studentName}</p>
+                        <img src="${b.boardData}" class="w-full rounded">
+                    </div>
+                `).join('')}
+            </div>`;
+            
+            const modalTitle = document.getElementById('modal-title');
+            const modalImg = document.getElementById('modal-img');
+            modalTitle.innerText = session.title;
+            modalImg.style.display = 'none'; // Hide single image
+            
+            // Check if we already appended content
+            const existing = viewer.querySelector('.detail-container');
+            if (existing) existing.remove();
+            
+            container.className += " detail-container";
+            viewer.querySelector('.max-w-[90vw]').appendChild(container);
+            viewer.style.display = 'flex';
+        }
+
+
+        function showFullWork(name, dataUrl) {
+            const modal = document.getElementById('full-screen-modal');
+            const modalImg = document.getElementById('modal-img');
+            const modalTitle = document.getElementById('modal-title');
+            
+            // Clean up details if viewer was open
+            const existing = modal.querySelector('.detail-container');
+            if (existing) existing.remove();
+
+
+            modalTitle.innerText = `${name}'s Board`;
+            modalImg.src = dataUrl;
+            modalImg.style.display = 'block';
+            modal.style.display = 'flex';
+        }
+    </script>
+</body>
+</html>
